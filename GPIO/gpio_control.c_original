@@ -1,0 +1,224 @@
+/* gpio_control.c
+
+  Arguments:  pin_number  export|unexport
+
+  Tries to export or unexport the specified GPIO pin.
+  After a successful export, permissions are set to g+r,g+w for
+  the active_low, direction, edge, and value files created by
+  the export operation.  The owner of these files is root, the group
+  of these files will be the group of the user who invokes this command.
+  Therefore, this user and any other users in the same group will
+  be able to control this GPIO pin.  (See "permit_all" below, to
+  allow or restrict access for other users.)
+
+  INSTALLATION
+
+  This program must run with root privilege, but normally will be invoked
+  by ordinary users.  To compile the program (no special privilege is required):
+
+    gcc -g -O2 -o gpio_control gpio_control.c
+
+  This produces the binary executable file:  gpio_control
+
+  This file should be copied by root into a system directory such as
+  /usr/sbin using:
+
+    sudo cp gpio_control /usr/sbin/
+
+  (therefore the owner of the file will be root).  Then, the "setuid"
+  attribute should be set by the command:
+
+    sudo chmod u+s /usr/sbin/gpio_control
+
+  ADDITIONAL FUNCTION
+
+  As written, this command is available to all users.  If only certain
+  users are to be allowed to use it, additional code to restrict use
+  may be added.  For example, a check could be made that the caller is in
+  a particular group which is allowed to perform GPIO functions.
+
+  
+  
+*/
+
+/* Define permit_all as 1 to make files read-write for all users,
+   define it to be 0 to make files read-write for caller's group only. */
+#define permit_all  0
+
+/* Exactly 54 pins, denoted 0-53, are implemented by the Broadcom BCM2835
+   used in the Raspberry Pi. */
+#define pin_max    53
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <ctype.h>
+
+#include <sys/types.h>
+#include <sys/stat.h>
+
+/* Array to 
+/* Specify 0 for a pin to forbid export and use of that pin;
+   specify 1 to allow access. */
+static const unsigned char allowed_pins[] =
+  { 1,         /* Pin  0 */
+    1,         /* Pin  1 */
+    1,         /* Pin  2 */
+    1,         /* Pin  3 */
+    1,         /* Pin  4 */
+    1,         /* Pin  5 */
+    1,         /* Pin  6 */
+    1,         /* Pin  7 */
+    1,         /* Pin  8 */
+    1,         /* Pin  9 */
+    1,         /* Pin 10 */
+    1,         /* Pin 11 */
+    1,         /* Pin 12 */
+    1,         /* Pin 13 */
+    1,         /* Pin 14 */
+    1,         /* Pin 15 */
+    1,         /* Pin 16 */
+    1,         /* Pin 17 */
+    1,         /* Pin 18 */
+    1,         /* Pin 19 */
+    1,         /* Pin 20 */
+    1,         /* Pin 21 */
+    1,         /* Pin 22 */
+    1,         /* Pin 23 */
+    1,         /* Pin 24 */
+    1,         /* Pin 25 */
+    1,         /* Pin 26 */
+    1,         /* Pin 27 */
+    1,         /* Pin 28 */
+    1,         /* Pin 29 */
+    1,         /* Pin 30 */
+    1,         /* Pin 31 */
+    1,         /* Pin 32 */
+    1,         /* Pin 33 */
+    1,         /* Pin 34 */
+    1,         /* Pin 35 */
+    1,         /* Pin 36 */
+    1,         /* Pin 37 */
+    1,         /* Pin 38 */
+    1,         /* Pin 39 */
+    1,         /* Pin 40 */
+    1,         /* Pin 41 */
+    1,         /* Pin 42 */
+    1,         /* Pin 43 */
+    1,         /* Pin 44 */
+    1,         /* Pin 45 */
+    1,         /* Pin 46 */
+    1,         /* Pin 47 */
+    1,         /* Pin 48 */
+    1,         /* Pin 49 */
+    1,         /* Pin 50 */
+    1,         /* Pin 51 */
+    1,         /* Pin 52 */
+    1,         /* Pin 53 */
+  };
+
+static int change_mode (char *pin, char *fname, gid_t gid)
+  {
+  char            path_buff[64];
+  int                    rc;
+
+  sprintf(path_buff, "/sys/class/gpio/gpio%s/%s", pin, fname);
+#if permit_all
+  rc = chmod(path_buff, S_IWGRP | S_IRGRP | S_IWUSR | S_IRUSR | S_IWOTH | S_IROTH);
+#else
+  rc = chmod(path_buff, S_IWGRP | S_IRGRP | S_IWUSR | S_IRUSR);
+#endif
+  if (rc)
+    {
+      perror(path_buff);
+      return rc;
+    }
+  rc = chown(path_buff, 0, gid);
+  if (rc)
+    perror("chown failed");
+  return 0;
+  }
+
+
+int main (int argc, char **argv)
+{
+  int                     x, fd, exit_code, pin_number;
+  char             *path_ex = "/sys/class/gpio/export";
+  char             *path_un = "/sys/class/gpio/unexport";
+  char             pin_buff[5];
+  gid_t                 gid;
+
+  if (argc < 3)
+    {
+      fprintf(stderr, "%s requires two arguments:\n1:  GPIO pin number\n2:  Operation (export or unexport)\nPin number specifies one of the 54 Broadcom BCM2835 GPIO pins.\n", argv[0]);
+      return 1;
+    }
+
+   /* Make a local copy of pin number argument, and test it is a number. */
+  for (x=0; x<sizeof(pin_buff); x++)
+    {
+      pin_buff[x] = argv[1][x];
+      if (! isdigit(pin_buff[x])) break;
+    }
+  if (pin_buff[x] != 0)
+    {
+      fprintf(stderr, "Invalid pin number format.\n");
+      return 1;
+    }
+  sscanf(pin_buff, "%d", &pin_number);  /* Get binary pin number. */
+  if (pin_number > pin_max)
+    {
+      fprintf(stderr, "Pin number must be less than %d\n", pin_max);
+      return 1;
+    }
+  if (allowed_pins[pin_number] == 0)
+    {
+      fprintf(stderr, "Pin %d is not configured for user access.\n", pin_number);
+      return 4;
+    }
+
+  if (0 == strcmp(argv[2], "unexport"))
+    {
+      fd = open(path_un, O_WRONLY);
+      if (fd < 0)
+	{
+	  perror(path_un);
+	  return 2;
+	}
+      if (0 > write(fd, pin_buff, strlen(pin_buff)))
+	{
+	  perror("unexport failed");
+	  exit_code = 3;
+	}
+      else exit_code = 0;
+      return exit_code;
+    }
+
+  if (0 == strcmp(argv[2], "export"))
+    {
+      fd = open(path_ex, O_WRONLY);
+      if (fd < 0)
+	{
+	  perror(path_ex);
+	  return 2;
+	}
+      if (0 > write(fd, pin_buff, strlen(pin_buff)))
+	{
+	  perror("export failed");
+	  close(fd);
+	  return 3;
+	}
+      close(fd);
+      gid = getgid();
+      x = 0;
+      x |= change_mode(pin_buff, "active_low", gid);
+      x |= change_mode(pin_buff, "direction", gid);
+      x |= change_mode(pin_buff, "edge", gid);
+      x |= change_mode(pin_buff, "value", gid);
+      return x;
+    }
+  fprintf(stderr, "Argument 2 must be either \"export\" or \"unexport\".\n");
+  return 1;
+}
