@@ -1,2 +1,3 @@
 # Drum-Module
-Raspberry pi drum kit python code
+TNMOC WEEK OF CODE 2018
+Raspberry Pi Drum-kit Module
